@@ -1,0 +1,24 @@
+[package]
+name = "status-led"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "no_std monochrome status LED abstraction with type-safe polarity and optional PWM gamma correction."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/loongsoldier/status-led"
+readme = "README.md"
+documentation = "https://docs.rs/status-led"
+keywords = ["embedded", "led", "no-std", "embassy", "gpio"]
+categories = ["embedded", "no-std", "hardware-support"]
+
+[dependencies]
+embedded-hal = "1.0"
+defmt = { version = "1.0", optional = true }
+
+[features]
+default = []
+pwm = []
+defmt = ["dep:defmt"]
+
+[dev-dependencies]
+embedded-hal-mock = "0.11"

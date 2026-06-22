@@ -1,0 +1,12 @@
+# Build output
+/target
+
+# Library crate — reproducible builds not needed for crates.io consumers
+Cargo.lock
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~
