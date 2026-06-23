@@ -36,15 +36,14 @@ led.off().unwrap();
 Enable the `pwm` feature:
 
 ```toml
-status-led = { version = "0.2", features = ["pwm"] }
+status-led = { version = "0.3", features = ["pwm"] }
 ```
 
 ```rust
-use status_led::pwm::{PwmLed, GammaCorrection};
-use status_led::ActiveLow;
+use status_led::{PwmLed, GammaCorrection, ActiveLow};
 
-let mut led = PwmLed::<_, ActiveLow>::new(ch, GammaCorrection::SRGB);
-led.set_brightness(128); // ~50% perceived brightness
+let mut led = PwmLed::<_, ActiveLow>::new(ch, GammaCorrection::Gamma2_2).unwrap();
+led.set_brightness(128).unwrap(); // ~50% perceived brightness
 ```
 
 ### Runtime polarity
