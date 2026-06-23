@@ -36,7 +36,7 @@ led.off().unwrap();
 Enable the `pwm` feature:
 
 ```toml
-status-led = { version = "0.1", features = ["pwm"] }
+status-led = { version = "0.2", features = ["pwm"] }
 ```
 
 ```rust
