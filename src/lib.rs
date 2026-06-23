@@ -11,4 +11,4 @@ pub use led::{FlexLed, Led};
 pub use polarity::{ActiveHigh, ActiveLow, Polarity, PolarityMode};
 
 #[cfg(feature = "pwm")]
-pub use pwm::FlexPwmLed;
+pub use pwm::{FlexPwmLed, GammaCorrection, PwmLed};

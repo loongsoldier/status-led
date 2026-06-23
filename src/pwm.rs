@@ -11,10 +11,12 @@ pub enum GammaCorrection {
     Linear,
     /// Power-law gamma=2.2 correction so `set_brightness(128)` appears ~50% bright.
     ///
-    /// Uses a 16-byte prefix table (raw 0-15, exact) + 16-knot equidistant
-    /// interpolation (raw >= 16, error <= 2).  Total 32 bytes flash, zero
-    /// error in the critical dim range where the eye is most sensitive.
-    SRGB,
+    /// This is a pure power-law curve, not the sRGB transfer function (which has
+    /// a linear toe near black).  Uses a 16-byte prefix table (raw 0-15, exact)
+    /// plus 16-knot equidistant interpolation (raw >= 16, error <= 2).  Total 32
+    /// bytes flash, zero error in the critical dim range where the eye is most
+    /// sensitive.
+    Gamma2_2,
 }
 
 impl GammaCorrection {
@@ -23,7 +25,7 @@ impl GammaCorrection {
     pub fn map(&self, raw: u8) -> u8 {
         match self {
             Self::Linear => raw,
-            Self::SRGB => {
+            Self::Gamma2_2 => {
                 if raw < 16 {
                     GAMMA_PREFIX[raw as usize]
                 } else {
@@ -50,8 +52,28 @@ pub struct PwmLed<P: SetDutyCycle, POL = crate::ActiveHigh> {
 }
 
 impl<P: SetDutyCycle, POL: Polarity> PwmLed<P, POL> {
-    /// Create a new PWM LED.  The pin should already be enabled.
-    pub fn new(pin: P, gamma: GammaCorrection) -> Self {
+    /// Create a new PWM LED and force it to the logical OFF state.
+    ///
+    /// The pin should already be enabled.  Like [`Led::new`], this guarantees the
+    /// LED starts dark regardless of the channel's current duty — important for
+    /// active-low, where a fresh channel at 0% duty would otherwise be fully lit.
+    ///
+    /// [`Led::new`]: crate::Led::new
+    pub fn new(pin: P, gamma: GammaCorrection) -> Result<Self, P::Error> {
+        let mut led = Self {
+            pin,
+            gamma,
+            _polarity: PhantomData,
+        };
+        led.off()?;
+        Ok(led)
+    }
+
+    /// Build from an already-configured channel without changing its duty cycle.
+    ///
+    /// Prefer this when the channel is already at a known duty.
+    #[inline]
+    pub fn from_pin(pin: P, gamma: GammaCorrection) -> Self {
         Self {
             pin,
             gamma,
@@ -104,7 +126,27 @@ pub struct FlexPwmLed<P: SetDutyCycle> {
 }
 
 impl<P: SetDutyCycle> FlexPwmLed<P> {
-    pub fn new(pin: P, gamma: GammaCorrection, polarity: PolarityMode) -> Self {
+    /// Create a new PWM LED and force it to the logical OFF state.
+    ///
+    /// The pin should already be enabled.  Guarantees the LED starts dark
+    /// regardless of the channel's current duty (see [`PwmLed::new`]).
+    pub fn new(
+        pin: P,
+        gamma: GammaCorrection,
+        polarity: PolarityMode,
+    ) -> Result<Self, P::Error> {
+        let mut led = Self {
+            pin,
+            gamma,
+            polarity,
+        };
+        led.off()?;
+        Ok(led)
+    }
+
+    /// Build from an already-configured channel without changing its duty cycle.
+    #[inline]
+    pub fn from_pin(pin: P, gamma: GammaCorrection, polarity: PolarityMode) -> Self {
         Self {
             pin,
             gamma,
@@ -196,7 +238,7 @@ mod tests {
     #[test]
     fn prefix_exact() {
         for raw in 0..16u8 {
-            assert_eq!(GammaCorrection::SRGB.map(raw), reference_gamma(raw));
+            assert_eq!(GammaCorrection::Gamma2_2.map(raw), reference_gamma(raw));
         }
     }
 
@@ -210,7 +252,7 @@ mod tests {
     fn interp_exact_at_knots() {
         for raw in (16..=255).step_by(16) {
             assert_eq!(
-                GammaCorrection::SRGB.map(raw as u8),
+                GammaCorrection::Gamma2_2.map(raw as u8),
                 reference_gamma(raw as u8)
             );
         }
@@ -218,7 +260,7 @@ mod tests {
 
     #[test]
     fn interp_max_error() {
-        let gamma = GammaCorrection::SRGB;
+        let gamma = GammaCorrection::Gamma2_2;
         let mut max_err = 0u16;
         for raw in 16..=255u8 {
             let got = gamma.map(raw);
@@ -230,7 +272,7 @@ mod tests {
 
     #[test]
     fn gamma_midpoint() {
-        assert_eq!(GammaCorrection::SRGB.map(128), 186);
+        assert_eq!(GammaCorrection::Gamma2_2.map(128), 186);
     }
 
     #[test]
