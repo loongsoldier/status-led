@@ -43,7 +43,7 @@ status-led = { version = "0.1", features = ["pwm"] }
 use status_led::pwm::{PwmLed, GammaCorrection};
 use status_led::ActiveLow;
 
-let mut led = PwmLed::<_, ActiveLow>::new(ch, ch.max_duty_cycle(), GammaCorrection::SRGB);
+let mut led = PwmLed::<_, ActiveLow>::new(ch, GammaCorrection::SRGB);
 led.set_brightness(128); // ~50% perceived brightness
 ```
 

@@ -40,28 +40,30 @@ impl GammaCorrection {
 }
 
 /// PWM-driven LED with brightness control and polarity.
+///
+/// Queries `max_duty_cycle()` from the pin on each `set_brightness()` call —
+/// no need to store it separately.
 pub struct PwmLed<P: SetDutyCycle, POL = crate::ActiveHigh> {
     pin: P,
-    max_duty: u16,
     gamma: GammaCorrection,
     _polarity: PhantomData<POL>,
 }
 
 impl<P: SetDutyCycle, POL: Polarity> PwmLed<P, POL> {
-    pub fn new(pin: P, max_duty: u16, gamma: GammaCorrection) -> Self {
+    /// Create a new PWM LED.  The pin should already be enabled.
+    pub fn new(pin: P, gamma: GammaCorrection) -> Self {
         Self {
             pin,
-            max_duty,
             gamma,
             _polarity: PhantomData,
         }
     }
 
-    /// Set brightness (0-255). Pipeline: `raw -> gamma -> polarity -> duty`.
+    /// Set brightness (0-255).  Pipeline: `raw -> gamma -> polarity -> duty`.
     pub fn set_brightness(&mut self, raw: u8) -> Result<(), P::Error> {
         let corrected = self.gamma.map(raw);
         let duty_raw = POL::map_duty(corrected);
-        let duty = (duty_raw as u32 * self.max_duty as u32 / 255) as u16;
+        let duty = (duty_raw as u32 * self.pin.max_duty_cycle() as u32 / 255) as u16;
         self.pin.set_duty_cycle(duty)
     }
 
@@ -70,42 +72,41 @@ impl<P: SetDutyCycle, POL: Polarity> PwmLed<P, POL> {
         self.set_brightness(raw)
     }
 
+    /// Turn the LED off (respects polarity).
     #[inline]
     pub fn off(&mut self) -> Result<(), P::Error> {
         self.set_brightness(0)
     }
+
+    /// Turn the LED fully on (respects polarity).
     #[inline]
     pub fn full_on(&mut self) -> Result<(), P::Error> {
         self.set_brightness(255)
     }
-    #[inline]
-    pub fn max_duty(&self) -> u16 {
-        self.max_duty
-    }
+
+    /// Consume and return the underlying PWM channel.
     #[inline]
     pub fn release(self) -> P {
         self.pin
     }
 }
 
-// ─── FlexPwmLed: PWM LED with runtime polarity ─────────
+// ─── FlexPwmLed ───────────────────────────────────────
 
-/// PWM LED with polarity stored as a runtime value.
+/// PWM LED with runtime-determined polarity.
 ///
-/// Like [`PwmLed`] but polarity is a [`PolarityMode`] enum instead of a
-/// compile-time type parameter.  Useful when polarity comes from configuration.
+/// Like [`PwmLed`] but polarity is a [`PolarityMode`] value instead of a
+/// compile-time type parameter.
 pub struct FlexPwmLed<P: SetDutyCycle> {
     pin: P,
-    max_duty: u16,
     gamma: GammaCorrection,
     polarity: PolarityMode,
 }
 
 impl<P: SetDutyCycle> FlexPwmLed<P> {
-    pub fn new(pin: P, max_duty: u16, gamma: GammaCorrection, polarity: PolarityMode) -> Self {
+    pub fn new(pin: P, gamma: GammaCorrection, polarity: PolarityMode) -> Self {
         Self {
             pin,
-            max_duty,
             gamma,
             polarity,
         }
@@ -114,7 +115,7 @@ impl<P: SetDutyCycle> FlexPwmLed<P> {
     pub fn set_brightness(&mut self, raw: u8) -> Result<(), P::Error> {
         let corrected = self.gamma.map(raw);
         let duty_raw = self.polarity.map_duty(corrected);
-        let duty = (duty_raw as u32 * self.max_duty as u32 / 255) as u16;
+        let duty = (duty_raw as u32 * self.pin.max_duty_cycle() as u32 / 255) as u16;
         self.pin.set_duty_cycle(duty)
     }
 
@@ -136,10 +137,6 @@ impl<P: SetDutyCycle> FlexPwmLed<P> {
         self.polarity
     }
     #[inline]
-    pub fn max_duty(&self) -> u16 {
-        self.max_duty
-    }
-    #[inline]
     pub fn release(self) -> P {
         self.pin
     }
@@ -149,7 +146,6 @@ impl<P: SetDutyCycle, POL: Polarity> From<PwmLed<P, POL>> for FlexPwmLed<P> {
     fn from(led: PwmLed<P, POL>) -> Self {
         Self {
             pin: led.pin,
-            max_duty: led.max_duty,
             gamma: led.gamma,
             polarity: POL::MODE,
         }
