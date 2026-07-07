@@ -1,9 +1,9 @@
 [package]
 name = "status-led"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.85"
-description = "no_std monochrome status LED abstraction with type-safe polarity and optional PWM gamma correction."
+description = "no_std monochrome status LED abstraction with optional PWM gamma correction."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/loongsoldier/status-led"
 readme = "README.md"

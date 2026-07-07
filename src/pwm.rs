@@ -1,7 +1,6 @@
-use core::marker::PhantomData;
 use embedded_hal::pwm::SetDutyCycle;
 
-use crate::polarity::{Polarity, PolarityMode};
+use crate::PolarityMode;
 
 /// Gamma correction mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,25 +44,24 @@ impl GammaCorrection {
 ///
 /// Queries `max_duty_cycle()` from the pin on each `set_brightness()` call —
 /// no need to store it separately.
-pub struct PwmLed<P: SetDutyCycle, POL = crate::ActiveHigh> {
+pub struct PwmLed<P: SetDutyCycle> {
     pin: P,
     gamma: GammaCorrection,
-    _polarity: PhantomData<POL>,
+    polarity: PolarityMode,
 }
 
-impl<P: SetDutyCycle, POL: Polarity> PwmLed<P, POL> {
+impl<P: SetDutyCycle> PwmLed<P> {
     /// Create a new PWM LED and force it to the logical OFF state.
     ///
-    /// The pin should already be enabled.  Like [`Led::new`], this guarantees the
-    /// LED starts dark regardless of the channel's current duty — important for
-    /// active-low, where a fresh channel at 0% duty would otherwise be fully lit.
+    /// The pin should already be enabled.  Guarantees the LED starts dark
+    /// regardless of the channel's current duty (see [`Led::new`]).
     ///
     /// [`Led::new`]: crate::Led::new
-    pub fn new(pin: P, gamma: GammaCorrection) -> Result<Self, P::Error> {
+    pub fn new(pin: P, gamma: GammaCorrection, polarity: PolarityMode) -> Result<Self, P::Error> {
         let mut led = Self {
             pin,
             gamma,
-            _polarity: PhantomData,
+            polarity,
         };
         led.off()?;
         Ok(led)
@@ -73,18 +71,18 @@ impl<P: SetDutyCycle, POL: Polarity> PwmLed<P, POL> {
     ///
     /// Prefer this when the channel is already at a known duty.
     #[inline]
-    pub fn from_pin(pin: P, gamma: GammaCorrection) -> Self {
+    pub fn from_pin(pin: P, gamma: GammaCorrection, polarity: PolarityMode) -> Self {
         Self {
             pin,
             gamma,
-            _polarity: PhantomData,
+            polarity,
         }
     }
 
     /// Set brightness (0-255).  Pipeline: `raw -> gamma -> polarity -> duty`.
     pub fn set_brightness(&mut self, raw: u8) -> Result<(), P::Error> {
         let corrected = self.gamma.map(raw);
-        let duty_raw = POL::map_duty(corrected);
+        let duty_raw = self.polarity.map_duty(corrected);
         let duty = (duty_raw as u32 * self.pin.max_duty_cycle() as u32 / 255) as u16;
         self.pin.set_duty_cycle(duty)
     }
@@ -106,91 +104,15 @@ impl<P: SetDutyCycle, POL: Polarity> PwmLed<P, POL> {
         self.set_brightness(255)
     }
 
-    /// Consume and return the underlying PWM channel.
-    #[inline]
-    pub fn release(self) -> P {
-        self.pin
-    }
-}
-
-// ─── FlexPwmLed ───────────────────────────────────────
-
-/// PWM LED with runtime-determined polarity.
-///
-/// Like [`PwmLed`] but polarity is a [`PolarityMode`] value instead of a
-/// compile-time type parameter.
-pub struct FlexPwmLed<P: SetDutyCycle> {
-    pin: P,
-    gamma: GammaCorrection,
-    polarity: PolarityMode,
-}
-
-impl<P: SetDutyCycle> FlexPwmLed<P> {
-    /// Create a new PWM LED and force it to the logical OFF state.
-    ///
-    /// The pin should already be enabled.  Guarantees the LED starts dark
-    /// regardless of the channel's current duty (see [`PwmLed::new`]).
-    pub fn new(
-        pin: P,
-        gamma: GammaCorrection,
-        polarity: PolarityMode,
-    ) -> Result<Self, P::Error> {
-        let mut led = Self {
-            pin,
-            gamma,
-            polarity,
-        };
-        led.off()?;
-        Ok(led)
-    }
-
-    /// Build from an already-configured channel without changing its duty cycle.
-    #[inline]
-    pub fn from_pin(pin: P, gamma: GammaCorrection, polarity: PolarityMode) -> Self {
-        Self {
-            pin,
-            gamma,
-            polarity,
-        }
-    }
-
-    pub fn set_brightness(&mut self, raw: u8) -> Result<(), P::Error> {
-        let corrected = self.gamma.map(raw);
-        let duty_raw = self.polarity.map_duty(corrected);
-        let duty = (duty_raw as u32 * self.pin.max_duty_cycle() as u32 / 255) as u16;
-        self.pin.set_duty_cycle(duty)
-    }
-
-    pub fn set_brightness_percent(&mut self, pct: u8) -> Result<(), P::Error> {
-        let raw = ((pct.min(100) as u16 * 255) / 100) as u8;
-        self.set_brightness(raw)
-    }
-
-    #[inline]
-    pub fn off(&mut self) -> Result<(), P::Error> {
-        self.set_brightness(0)
-    }
-    #[inline]
-    pub fn full_on(&mut self) -> Result<(), P::Error> {
-        self.set_brightness(255)
-    }
     #[inline]
     pub fn polarity(&self) -> PolarityMode {
         self.polarity
     }
+
+    /// Consume and return the underlying PWM channel.
     #[inline]
     pub fn release(self) -> P {
         self.pin
-    }
-}
-
-impl<P: SetDutyCycle, POL: Polarity> From<PwmLed<P, POL>> for FlexPwmLed<P> {
-    fn from(led: PwmLed<P, POL>) -> Self {
-        Self {
-            pin: led.pin,
-            gamma: led.gamma,
-            polarity: POL::MODE,
-        }
     }
 }
 
@@ -203,14 +125,14 @@ const GAMMA_PREFIX: [u8; 16] = [
 
 #[rustfmt::skip]
 const GAMMA_KNOTS_HI: [u8; 16] = [
-   72,  99, 119, 136, 151, 164, 175, 186,
-  197, 206, 215, 224, 232, 240, 248, 255,
+    72,  99, 119, 136, 151, 164, 175, 186,
+   197, 206, 215, 224, 232, 240, 248, 255,
 ];
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ActiveLow;
+    use crate::PolarityMode;
 
     fn reference_gamma(raw: u8) -> u8 {
         #[rustfmt::skip]
@@ -277,7 +199,7 @@ mod tests {
 
     #[test]
     fn polarity_off_and_full_on_invert() {
-        assert_eq!(ActiveLow::map_duty(0), 255);
-        assert_eq!(ActiveLow::map_duty(255), 0);
+        assert_eq!(PolarityMode::ActiveLow.map_duty(0), 255);
+        assert_eq!(PolarityMode::ActiveLow.map_duty(255), 0);
     }
 }

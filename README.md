@@ -6,14 +6,12 @@
 
 `no_std` monochrome status LED abstraction for the [embassy] ecosystem.
 
-- **Type-safe polarity** — `ActiveHigh` / `ActiveLow` markers prevent
-  logic errors at compile time.
+- **Polarity** — `ActiveHigh` / `ActiveLow` chosen at construction time
+  via [`PolarityMode`].
 - **Reads hardware directly** — no internal state cache; `is_on()` reads
   the ODR register and applies polarity conversion.
 - **Optional PWM** — gamma-corrected brightness via `PwmLed` with a
   compact 16+16 byte lookup table.
-- **`FlexLed` / `FlexPwmLed`** — runtime polarity when the configuration
-  comes from a config file instead of a type parameter.
 - **Zero mandatory dependencies** — only `embedded-hal` 1.0.
 
 [embassy]: https://embassy.dev
@@ -22,10 +20,10 @@
 
 ```rust
 use embassy_stm32::gpio::{Output, Level, Speed};
-use status_led::{Led, ActiveLow};
+use status_led::{Led, PolarityMode};
 
 let pin = Output::new(p.PA5, Level::High, Speed::Low);
-let mut led = Led::<_, ActiveLow>::from_pin(pin);
+let mut led = Led::from_pin(pin, PolarityMode::ActiveLow);
 
 led.on().unwrap();
 led.off().unwrap();
@@ -36,13 +34,13 @@ led.off().unwrap();
 Enable the `pwm` feature:
 
 ```toml
-status-led = { version = "0.3", features = ["pwm"] }
+status-led = { version = "0.4", features = ["pwm"] }
 ```
 
 ```rust
-use status_led::{PwmLed, GammaCorrection, ActiveLow};
+use status_led::{PwmLed, GammaCorrection, PolarityMode};
 
-let mut led = PwmLed::<_, ActiveLow>::new(ch, GammaCorrection::Gamma2_2).unwrap();
+let mut led = PwmLed::new(ch, GammaCorrection::Gamma2_2, PolarityMode::ActiveLow).unwrap();
 led.set_brightness(128).unwrap(); // ~50% perceived brightness
 ```
 
@@ -51,14 +49,14 @@ led.set_brightness(128).unwrap(); // ~50% perceived brightness
 When the polarity is read from configuration at runtime:
 
 ```rust
-use status_led::{FlexLed, PolarityMode};
+use status_led::{Led, PolarityMode};
 
 let pol = if config.active_low {
     PolarityMode::ActiveLow
 } else {
     PolarityMode::ActiveHigh
 };
-let mut led = FlexLed::new(pin, pol).unwrap();
+let mut led = Led::new(pin, pol).unwrap();
 led.toggle().unwrap();
 ```
 
@@ -66,8 +64,8 @@ led.toggle().unwrap();
 
 | Feature | Description | Extra deps |
 |---|---|---|
-| *(none)* | GPIO LED with compile-time polarity | — |
-| `pwm` | `PwmLed` + `FlexPwmLed` with gamma-corrected brightness | — |
+| *(none)* | GPIO LED with runtime polarity | — |
+| `pwm` | `PwmLed` with gamma-corrected brightness | — |
 | `defmt` | `defmt::Format` impls for all public types | `defmt` |
 
 ## License
