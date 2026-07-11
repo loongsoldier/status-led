@@ -9,4 +9,4 @@ pub mod pwm;
 pub use led::{Led, PolarityMode};
 
 #[cfg(feature = "pwm")]
-pub use pwm::{GammaCorrection, PwmLed};
+pub use pwm::{GammaCorrection, GammaMap, PwmLed};

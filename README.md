@@ -10,8 +10,8 @@
   via [`PolarityMode`].
 - **Reads hardware directly** — no internal state cache; `is_on()` reads
   the ODR register and applies polarity conversion.
-- **Optional PWM** — gamma-corrected brightness via `PwmLed` with a
-  compact 16+16 byte lookup table.
+- **Optional PWM** — CIE L\* perceptual brightness via `PwmLed` with a
+  compact 32-byte lookup table + shift-add interpolation (zero multiply/divide).
 - **Zero mandatory dependencies** — only `embedded-hal` 1.0.
 
 [embassy]: https://embassy.dev
@@ -38,9 +38,10 @@ status-led = { version = "0.4", features = ["pwm"] }
 ```
 
 ```rust
-use status_led::{PwmLed, GammaCorrection, PolarityMode};
+use status_led::pwm::{GammaCorrection, PwmLed};
+use status_led::PolarityMode;
 
-let mut led = PwmLed::new(ch, GammaCorrection::Gamma2_2, PolarityMode::ActiveLow).unwrap();
+let mut led = PwmLed::new(ch, GammaCorrection::CieLStar, PolarityMode::ActiveLow).unwrap();
 led.set_brightness(128).unwrap(); // ~50% perceived brightness
 ```
 
@@ -65,7 +66,7 @@ led.toggle().unwrap();
 | Feature | Description | Extra deps |
 |---|---|---|
 | *(none)* | GPIO LED with runtime polarity | — |
-| `pwm` | `PwmLed` with gamma-corrected brightness | — |
+| `pwm` | `PwmLed` with CIE L\* perceptual brightness, zero runtime multiply/divide | — |
 | `defmt` | `defmt::Format` impls for all public types | `defmt` |
 
 ## License
