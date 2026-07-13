@@ -170,7 +170,7 @@ impl GammaMap for GammaCorrection {
                 let frac = (r & 0x0F) as u8; // 0..15
 
                 let lo = cie8_map(base) as u16;
-                let hi = cie8_map(base.saturating_add(1).min(255)) as u16;
+                let hi = cie8_map(base.saturating_add(1)) as u16;
 
                 // Linear interpolation in 8-bit space
                 let v8 = lo + ((hi - lo) * frac as u16 + 8) / 16;

@@ -9,6 +9,7 @@
 // ── 8-bit (default) ────────────────────────────────────
 
 #[cfg(not(feature = "brightness-12bit"))]
+#[allow(dead_code)]
 mod inner {
     /// Brightness value — `u8` when the `brightness-12bit` feature is **not** set.
     pub type Brightness = u8;
@@ -56,6 +57,7 @@ mod inner {
 // ── 12-bit (feature = "brightness-12bit") ──────────────
 
 #[cfg(feature = "brightness-12bit")]
+#[allow(dead_code)]
 mod inner {
     use arbitrary_int::prelude::*;
     use arbitrary_int::u12;
