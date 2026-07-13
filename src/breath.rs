@@ -297,7 +297,7 @@ impl<P: SetDutyCycle, G: GammaMap> BreathLed<P, G> {
     /// control.
     #[inline]
     pub fn led(&mut self) -> &mut PwmLed<P, G> {
-        &self.led
+        &mut self.led
     }
 
     /// Consume and return the underlying [`PwmLed`], discarding the
