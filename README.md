@@ -81,9 +81,12 @@ let mut led = BreathLed::new(
 ).unwrap();
 
 loop {
-    led.breath().unwrap();
-    Timer::after_millis(50).await;
+    led.breathe().await.unwrap();
 }
+```
+
+`breathe()` combines the brightness update with the sleep — no separate
+`Timer` call needed.
 
 ### Runtime polarity
 
@@ -107,7 +110,7 @@ led.toggle().unwrap();
 |---|---|---|
 | *(none)* | GPIO LED with runtime polarity | — |
 | `pwm` | `PwmLed` with CIE L\* perceptual brightness, zero runtime multiply/divide | — |
-| `breath` | `Breath` + `BreathLed` — CORDIC sinusoidal breathing effect | — (enables `pwm`) |
+| `breath` | `Breath` + `BreathLed` — CORDIC sinusoidal breathing with async `breathe()` | — (enables `pwm`, `embassy-time`) |
 | `defmt` | `defmt::Format` impls for all public types | `defmt` |
 
 ## License

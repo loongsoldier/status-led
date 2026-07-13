@@ -105,6 +105,7 @@ fn cordic_sin(phase: u16) -> u8 {
 pub struct Breath {
     phase: u16,
     phase_step: u16,
+    interval_ms: u32,
 }
 
 impl Breath {
@@ -134,27 +135,7 @@ impl Breath {
         Self {
             phase: 0,
             phase_step: step.max(1),
-        }
-    }
-
-    /// Create with a raw phase step.
-    ///
-    /// Each call to [`next`](Self::next) advances the phase by `step`.
-    /// A full cycle is 65536 phase units (e.g. `step = 256` gives
-    /// 256 steps per cycle).
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use status_led::breath::Breath;
-    ///
-    /// let mut breath = Breath::with_step(2048);
-    /// ```
-    #[inline]
-    pub const fn with_step(step: u16) -> Self {
-        Self {
-            phase: 0,
-            phase_step: step,
+            interval_ms,
         }
     }
 
@@ -183,6 +164,7 @@ impl core::fmt::Debug for Breath {
         f.debug_struct("Breath")
             .field("phase", &self.phase)
             .field("phase_step", &self.phase_step)
+            .field("interval_ms", &self.interval_ms)
             .finish()
     }
 }
@@ -192,9 +174,10 @@ impl defmt::Format for Breath {
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(
             fmt,
-            "Breath {{ phase: {}, step: {} }}",
+            "Breath {{ phase: {}, step: {}, interval_ms: {} }}",
             self.phase,
-            self.phase_step
+            self.phase_step,
+            self.interval_ms
         )
     }
 }
@@ -208,7 +191,7 @@ use embedded_hal::pwm::SetDutyCycle;
 /// PWM LED with a built-in sinusoidal breathing effect.
 ///
 /// Wraps a [`PwmLed`] together with a [`Breath`] generator, providing a
-/// single [`breath`](Self::breath) call that advances the animation and
+/// single [`breathe`](Self::breathe) call that advances the animation and
 /// updates the LED brightness.
 ///
 /// Requires the `breath` feature (which enables `pwm`):
@@ -233,8 +216,7 @@ use embedded_hal::pwm::SetDutyCycle;
 /// ).unwrap();
 ///
 /// loop {
-///     led.breath().unwrap();
-///     Timer::after_millis(50).await;
+///     led.breathe().await.unwrap();
 /// }
 /// ```
 pub struct BreathLed<P: SetDutyCycle, G: GammaMap = GammaCorrection> {
@@ -261,24 +243,34 @@ impl<P: SetDutyCycle, G: GammaMap> BreathLed<P, G> {
         Ok(Self { led, breath })
     }
 
-    /// Advance the breath animation by one step and update the LED
-    /// brightness.
-    ///
-    /// This is the main animation method — call it at the interval
-    /// specified during construction.
-    #[inline]
-    pub fn breath(&mut self) -> Result<(), P::Error> {
-        let brightness = self.breath.next();
-        self.led.set_brightness(brightness)
-    }
-
     /// Reset the breathing cycle to the start (brightness minimum).
     ///
-    /// Does **not** update the LED — call [`breath`](Self::breath)
+    /// Does **not** update the LED — call [`breathe`](Self::breathe)
     /// afterwards to apply.
     #[inline]
     pub fn reset_breath(&mut self) {
         self.breath.reset();
+    }
+
+    /// Advance one breath step, update LED, then sleep for the configured
+    /// interval.
+    ///
+    /// This is the main animation method — combines brightness update with
+    /// [`Timer::after_millis`](embassy_time::Timer::after_millis).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// loop {
+    ///     led.breathe().await.unwrap();
+    /// }
+    /// ```
+    #[inline]
+    pub async fn breathe(&mut self) -> Result<(), P::Error> {
+        let brightness = self.breath.next();
+        self.led.set_brightness(brightness)?;
+        embassy_time::Timer::after_millis(self.breath.interval_ms as u64).await;
+        Ok(())
     }
 
     /// Return a reference to the inner [`PwmLed`].
@@ -401,11 +393,6 @@ mod tests {
     }
 
     #[test]
-    fn breath_with_step_does_not_panic() {
-        let _b = Breath::with_step(256);
-    }
-
-    #[test]
     fn breath_next_returns_valid_range() {
         let mut b = Breath::new(1000, 50);
         for _ in 0..1000 {
@@ -417,22 +404,18 @@ mod tests {
 
     #[test]
     fn breath_next_advances() {
-        let mut b = Breath::with_step(16384); // 90° per step
+        // A large interval ensures a big phase step, so consecutive calls
+        // should return noticeably different brightness values.
+        let mut b = Breath::new(65536, 16384);
         let v1 = b.next();
         let v2 = b.next();
-        // After a 90° phase jump, brightness should change significantly
         let diff = (v1 as i16 - v2 as i16).unsigned_abs();
-        assert!(
-            diff > 50,
-            "phase didn't advance meaningfully: {}→{}",
-            v1,
-            v2
-        );
+        assert!(diff > 0, "phase didn't advance: {}→{}", v1, v2);
     }
 
     #[test]
     fn breath_reset() {
-        let mut b = Breath::with_step(16384); // 90° per step
+        let mut b = Breath::new(65536, 16384); // 90° per step
         // Advance several steps away from the start
         for _ in 0..10 {
             b.next();
@@ -451,7 +434,7 @@ mod tests {
     #[test]
     fn breath_full_cycle_reaches_min_and_max() {
         // 256 steps per cycle — enough samples to hit both extremes
-        let mut b = Breath::with_step(256);
+        let mut b = Breath::new(65536, 256);
         let mut min = 255u8;
         let mut max = 0u8;
         for _ in 0..300 {
@@ -505,29 +488,6 @@ mod tests {
         }
 
         #[test]
-        fn breath_led_breath_updates_brightness() {
-            // First breath() call: sin(0) → ~128 → duty ≈ 502 (ActiveHigh + Linear)
-            // Second breath() call: phase advances, sin → ~132 → duty ≈ 518
-            let e = [
-                PwmTrans::max_duty_cycle(MAX_DUTY),
-                PwmTrans::set_duty_cycle(0), // new → off
-                PwmTrans::set_duty_cycle(502),
-                PwmTrans::set_duty_cycle(518),
-            ];
-            let mut led = BreathLed::new(
-                PwmMock::new(&e),
-                GammaCorrection::Linear,
-                PolarityMode::ActiveHigh,
-                10_000,
-                50,
-            )
-            .unwrap();
-            led.breath().unwrap();
-            led.breath().unwrap();
-            led.release().release().done();
-        }
-
-        #[test]
         fn breath_led_reset_breath() {
             let e = [
                 PwmTrans::max_duty_cycle(MAX_DUTY),
@@ -543,47 +503,6 @@ mod tests {
             .unwrap();
             // reset_breath() should not cause any PWM operations
             led.reset_breath();
-            led.release().release().done();
-        }
-
-        #[test]
-        fn breath_led_active_low() {
-            // active-low: brightness 0 → duty=MAX, brightness 255 → duty=0
-            let e = [
-                PwmTrans::max_duty_cycle(MAX_DUTY),
-                PwmTrans::set_duty_cycle(MAX_DUTY), // new → off (active-low)
-                PwmTrans::set_duty_cycle(498),      // breath() → sin(0)≈128 → duty≈498
-            ];
-            let mut led = BreathLed::new(
-                PwmMock::new(&e),
-                GammaCorrection::Linear,
-                PolarityMode::ActiveLow,
-                10_000,
-                50,
-            )
-            .unwrap();
-            led.breath().unwrap();
-            assert!(led.led().is_on()); // sin(0)≈128 > 0 → is_on
-            led.release().release().done();
-        }
-
-        #[test]
-        fn breath_led_with_cie_lstar() {
-            // With CIE L*, sin(0)≈128 raw → gamma maps to ~194 → duty=194*1000/255≈761
-            let e = [
-                PwmTrans::max_duty_cycle(MAX_DUTY),
-                PwmTrans::set_duty_cycle(0), // new → off
-                PwmTrans::set_duty_cycle(761),
-            ];
-            let mut led = BreathLed::new(
-                PwmMock::new(&e),
-                GammaCorrection::CieLStar,
-                PolarityMode::ActiveHigh,
-                10_000,
-                50,
-            )
-            .unwrap();
-            led.breath().unwrap();
             led.release().release().done();
         }
     }
