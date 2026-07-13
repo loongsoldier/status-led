@@ -1,6 +1,6 @@
 [package]
 name = "status-led"
-version = "0.7.0"
+version = "0.7.1"
 edition = "2024"
 rust-version = "1.85"
 description = "no_std monochrome status LED abstraction with optional PWM gamma correction and breathing effect."
@@ -15,12 +15,14 @@ categories = ["embedded", "no-std", "hardware-support"]
 embedded-hal = "1.0"
 defmt = { version = "1.0", optional = true }
 embassy-time = { version = "0.5", optional = true }
+arbitrary-int = { version = "2", optional = true }
 
 [features]
 default = []
 pwm = []
 breath = ["pwm", "dep:embassy-time"]
-defmt = ["dep:defmt"]
+defmt = ["dep:defmt", "arbitrary-int?/defmt"]
+brightness-12bit = ["dep:arbitrary-int"]
 
 [dev-dependencies]
 embedded-hal-mock = "0.11"

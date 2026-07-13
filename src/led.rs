@@ -1,3 +1,4 @@
+use crate::brightness::{self, Brightness};
 use embedded_hal::digital::{OutputPin, PinState, StatefulOutputPin};
 
 /// Runtime polarity mode.
@@ -55,10 +56,11 @@ impl PolarityMode {
 
     #[inline]
     #[allow(dead_code)] // only used when feature = "pwm"
-    pub(crate) fn map_duty(self, brightness: u8) -> u8 {
+    pub(crate) fn map_duty(self, brightness: Brightness) -> Brightness {
         match self {
             Self::ActiveHigh => brightness,
-            Self::ActiveLow => 255 - brightness,
+            // Wrapping subtraction: MAX - brightness inverts the duty for active-low.
+            Self::ActiveLow => brightness::max_value() - brightness,
         }
     }
 }

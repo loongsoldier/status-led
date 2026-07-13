@@ -1,20 +1,25 @@
 //! Sinusoidal breathing effect for monochrome LEDs.
 //!
-//! [`Breath`] generates a stream of brightness values (0–255) following a
+//! [`Breath`] generates a stream of brightness values following a
 //! sine wave, suitable for driving a PWM LED with a natural "breathing"
 //! fade-in / fade-out.
+//!
+//! The brightness type is `u8` (0–255) by default. Enable the
+//! `brightness-12bit` feature to use `arbitrary_int::u12` (0–4095).
 //!
 //! Enable the `breath` feature in `Cargo.toml`:
 //!
 //! ```toml
-//! status-led = { version = "0.5", features = ["breath"] }
+//! status-led = { version = "0.7", features = ["breath"] }
 //! ```
 //!
 //! Combine with `pwm` for [`BreathLed`], a ready-to-use PWM LED wrapper:
 //!
 //! ```toml
-//! status-led = { version = "0.5", features = ["breath", "pwm"] }
+//! status-led = { version = "0.7", features = ["breath", "pwm"] }
 //! ```
+
+use crate::brightness::{self, Brightness};
 
 // ── CORDIC sine ─────────────────────────────────────────
 //
@@ -34,14 +39,14 @@ const CORDIC_ATAN: [i16; 15] = [
 /// X_INIT = round(32768 × 256 × K) = 5,094,520
 const X_INIT: i32 = 5_094_520;
 
-/// Compute sin(phase) mapped to 0..=255.
+/// Core CORDIC sine — returns a raw 8-bit value in `0..=255`.
 ///
 /// Phase is a `u16` where 0 → 0°, 16384 → 90°, 32768 → 180°.
 /// Uses CORDIC rotation mode with shift-add only — zero multiplication,
 /// zero lookup tables (beyond the 30-byte atan table), zero floating
 /// point.
 #[inline]
-fn cordic_sin(phase: u16) -> u8 {
+fn cordic_sin_raw(phase: u16) -> u8 {
     // ── Quadrant reduction: map to [0, π/2] = [0, 16384] ──
     let mut negate = false;
     let mut angle: i32 = phase as i32;
@@ -78,11 +83,20 @@ fn cordic_sin(phase: u16) -> u8 {
     ((y >> 16) + 128).clamp(0, 255) as u8
 }
 
+/// Compute sin(phase) mapped to the current [`Brightness`] range (0..=MAX).
+///
+/// Calls the 8-bit CORDIC core, then scales the result to the target bit depth.
+#[inline]
+fn cordic_sin(phase: u16) -> Brightness {
+    let raw8 = cordic_sin_raw(phase);
+    brightness::from_u32_clamped(raw8 as u32 * brightness::MAX_BRIGHTNESS / 255)
+}
+
 // ── Breath ────────────────────────────────────────────
 
 /// Breathing effect generator.
 ///
-/// Produces a sequence of brightness values (0–255) following a sinusoidal
+/// Produces a sequence of brightness values following a sinusoidal
 /// pattern, suitable for driving an LED with a natural "breathing" effect
 /// (smooth fade-in / fade-out).
 ///
@@ -141,13 +155,13 @@ impl Breath {
         }
     }
 
-    /// Advance the phase and return the next brightness value (0–255).
+    /// Advance the phase and return the next brightness value.
     ///
     /// The brightness follows a sinusoidal curve: starts near 0, rises to
-    /// 255 at the peak, then falls back to near 0.
+    /// max at the peak, then falls back to near 0.
     #[inline]
     #[allow(clippy::should_implement_trait)]
-    pub fn next(&mut self) -> u8 {
+    pub fn next(&mut self) -> Brightness {
         let brightness = cordic_sin(self.phase);
         self.phase = self.phase.wrapping_add(self.phase_step);
         brightness
@@ -200,7 +214,7 @@ use embedded_hal::pwm::SetDutyCycle;
 /// Requires the `breath` feature (which enables `pwm`):
 ///
 /// ```toml
-/// status-led = { version = "0.5", features = ["breath"] }
+/// status-led = { version = "0.7", features = ["breath"] }
 /// ```
 ///
 /// # Example
@@ -296,7 +310,10 @@ impl<P: SetDutyCycle, G: GammaMap> BreathLed<P, G> {
 
 // ── Debug / defmt for BreathLed ───────────────────────
 
-impl<P: SetDutyCycle, G: GammaMap> core::fmt::Debug for BreathLed<P, G> {
+impl<P: SetDutyCycle, G: GammaMap> core::fmt::Debug for BreathLed<P, G>
+where
+    G: core::fmt::Debug,
+{
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("BreathLed")
             .field("led", &self.led)
@@ -306,7 +323,10 @@ impl<P: SetDutyCycle, G: GammaMap> core::fmt::Debug for BreathLed<P, G> {
 }
 
 #[cfg(feature = "defmt")]
-impl<P: SetDutyCycle, G: GammaMap> defmt::Format for BreathLed<P, G> {
+impl<P: SetDutyCycle, G: GammaMap> defmt::Format for BreathLed<P, G>
+where
+    G: defmt::Format,
+{
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(
             fmt,
@@ -329,45 +349,67 @@ mod tests {
     #[test]
     fn cordic_sin_range() {
         for phase in (0..=65535u16).step_by(137) {
-            let _v = cordic_sin(phase);
-            // cordic_sin always returns u8, so 0..=255 is guaranteed by type
+            let v = cordic_sin(phase);
+            let vu = brightness::to_u32(v);
+            assert!(
+                vu <= brightness::MAX_BRIGHTNESS,
+                "cordic_sin({phase}) = {vu}, exceeds max {}",
+                brightness::MAX_BRIGHTNESS
+            );
         }
     }
 
     #[test]
     fn cordic_sin_endpoints() {
-        // sin(0) ≈ 0, mapped to 128 (midpoint of [0,255] for sine's zero crossing)
-        let v0 = cordic_sin(0);
-        assert!(v0 >= 126 && v0 <= 130, "sin(0) = {}", v0);
+        let max = brightness::MAX_BRIGHTNESS;
+        // sin(0) ≈ 0, mapped near the midpoint of the brightness range
+        let mid = max / 2;
+        let v0 = brightness::to_u32(cordic_sin(0));
+        let half_range = if max == 255 { 2 } else { 32 };
+        assert!(
+            v0.abs_diff(mid) <= half_range,
+            "sin(0) = {v0}, expected ~{mid}"
+        );
 
-        // sin(π/2) = sin(16384) ≈ 1, mapped to 255
-        let v90 = cordic_sin(16384);
-        assert!(v90 >= 253, "sin(π/2) = {}", v90);
+        // sin(π/2) = sin(16384) ≈ 1 → max brightness
+        let v90 = brightness::to_u32(cordic_sin(16384));
+        assert!(
+            v90 >= max.saturating_sub(2),
+            "sin(π/2) = {v90}, expected ~{max}"
+        );
 
-        // sin(π) = sin(32768) ≈ 0, mapped to 128
-        let v180 = cordic_sin(32768);
-        assert!(v180 >= 126 && v180 <= 130, "sin(π) = {}", v180);
+        // sin(π) = sin(32768) ≈ 0 → midpoint
+        let v180 = brightness::to_u32(cordic_sin(32768));
+        assert!(
+            v180.abs_diff(mid) <= half_range,
+            "sin(π) = {v180}, expected ~{mid}"
+        );
 
-        // sin(3π/2) = sin(49152) ≈ -1, mapped to near 0
-        let v270 = cordic_sin(49152);
-        assert!(v270 <= 2, "sin(3π/2) = {}", v270);
+        // sin(3π/2) = sin(49152) ≈ -1 → near min
+        let v270 = brightness::to_u32(cordic_sin(49152));
+        let near_min = if max == 255 { 2 } else { 33 };
+        assert!(v270 <= near_min, "sin(3π/2) = {v270}, expected ≤{near_min}");
     }
 
     #[test]
     fn cordic_sin_symmetry() {
-        // sin(phase) and sin(π − phase) should be symmetric around 128
+        // sin(phase) and sin(π − phase) should be symmetric around midpoint
+        let mid = brightness::MAX_BRIGHTNESS / 2;
         for phase in (0..=16384u16).step_by(257) {
-            let a = cordic_sin(phase);
-            let b = cordic_sin(32768 - phase);
-            let sym_a = (a as i16 - 128).unsigned_abs();
-            let sym_b = (b as i16 - 128).unsigned_abs();
-            let diff = (sym_a as i16 - sym_b as i16).unsigned_abs();
+            let a = brightness::to_u32(cordic_sin(phase));
+            let b = brightness::to_u32(cordic_sin(32768 - phase));
+            // Distance from midpoint
+            let sym_a = a.abs_diff(mid);
+            let sym_b = b.abs_diff(mid);
+            let diff = sym_a.abs_diff(sym_b);
+            let tolerance = if brightness::MAX_BRIGHTNESS == 255 {
+                2
+            } else {
+                33
+            };
             assert!(
-                diff <= 2,
-                "symmetry broken at phase={}: a={}, b={}",
-                phase,
-                a,
-                b
+                diff <= tolerance,
+                "symmetry broken at phase={phase}: a={a}, b={b}"
             );
         }
     }
@@ -375,15 +417,12 @@ mod tests {
     #[test]
     fn cordic_sin_monotonic_rising() {
         // In [0, 16384] (0 to π/2), output should be non-decreasing
-        let mut prev = cordic_sin(0);
+        let mut prev = brightness::to_u32(cordic_sin(0));
         for phase in 1..=16384u16 {
-            let val = cordic_sin(phase);
+            let val = brightness::to_u32(cordic_sin(phase));
             assert!(
                 val >= prev,
-                "non-monotonic at phase={}: {} -> {}",
-                phase,
-                prev,
-                val
+                "non-monotonic at phase={phase}: {prev} -> {val}"
             );
             prev = val;
         }
@@ -400,9 +439,11 @@ mod tests {
     fn breath_next_returns_valid_range() {
         let mut b = Breath::new(Duration::from_millis(1000), Duration::from_millis(50));
         for _ in 0..1000 {
-            let _v = b.next();
-            // next() returns u8, so 0..=255 is guaranteed by type.
-            // This test verifies no panic over many iterations.
+            let v = brightness::to_u32(b.next());
+            assert!(
+                v <= brightness::MAX_BRIGHTNESS,
+                "breath.next() = {v}, exceeds max"
+            );
         }
     }
 
@@ -411,10 +452,10 @@ mod tests {
         // A large interval ensures a big phase step, so consecutive calls
         // should return noticeably different brightness values.
         let mut b = Breath::new(Duration::from_millis(65536), Duration::from_millis(16384));
-        let v1 = b.next();
-        let v2 = b.next();
-        let diff = (v1 as i16 - v2 as i16).unsigned_abs();
-        assert!(diff > 0, "phase didn't advance: {}→{}", v1, v2);
+        let v1 = brightness::to_u32(b.next());
+        let v2 = brightness::to_u32(b.next());
+        let diff = v1.abs_diff(v2);
+        assert!(diff > 0, "phase didn't advance: {v1}→{v2}");
     }
 
     #[test]
@@ -426,12 +467,18 @@ mod tests {
         }
         // Reset to cycle start
         b.reset();
-        // After reset, next() should return near the starting brightness
-        let v = b.next();
-        // sin(0) ≈ 128 (±2)
+        // After reset, next() should return near the starting (midpoint) brightness
+        let v = brightness::to_u32(b.next());
+        // sin(0) ≈ midpoint
+        let mid = brightness::MAX_BRIGHTNESS / 2;
+        let tolerance = if brightness::MAX_BRIGHTNESS == 255 {
+            2
+        } else {
+            32
+        };
         assert!(
-            (126..=130).contains(&v),
-            "after reset got {v}, expected ~128"
+            v.abs_diff(mid) <= tolerance * 2,
+            "after reset got {v}, expected ~{mid}"
         );
     }
 
@@ -439,15 +486,24 @@ mod tests {
     fn breath_full_cycle_reaches_min_and_max() {
         // 256 steps per cycle — enough samples to hit both extremes
         let mut b = Breath::new(Duration::from_millis(65536), Duration::from_millis(256));
-        let mut min = 255u8;
-        let mut max = 0u8;
+        let mut min = brightness::MAX_BRIGHTNESS;
+        let mut max = 0u32;
         for _ in 0..300 {
-            let v = b.next();
+            let v = brightness::to_u32(b.next());
             min = min.min(v);
             max = max.max(v);
         }
-        assert!(min <= 2, "min should be near 0, got {}", min);
-        assert!(max >= 253, "max should be near 255, got {}", max);
+        let near_min = if brightness::MAX_BRIGHTNESS == 255 {
+            2
+        } else {
+            33
+        };
+        assert!(min <= near_min, "min should be near 0, got {min}");
+        assert!(
+            max >= brightness::MAX_BRIGHTNESS.saturating_sub(2),
+            "max should be near {}, got {max}",
+            brightness::MAX_BRIGHTNESS
+        );
     }
 
     #[test]
