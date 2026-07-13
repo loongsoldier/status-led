@@ -6,7 +6,16 @@ mod led;
 #[cfg(feature = "pwm")]
 pub mod pwm;
 
+#[cfg(feature = "breath")]
+pub mod breath;
+
 pub use led::{Led, PolarityMode};
 
 #[cfg(feature = "pwm")]
 pub use pwm::{GammaCorrection, GammaMap, PwmLed};
+
+#[cfg(feature = "breath")]
+pub use breath::Breath;
+
+#[cfg(feature = "breath")]
+pub use breath::BreathLed;
