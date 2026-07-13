@@ -95,7 +95,7 @@ fn cordic_sin(phase: u16) -> u8 {
 /// use status_led::breath::Breath;
 ///
 /// // 12.8 second cycle, updated every 50 ms
-/// let mut breath = Breath::new(12_800, 50);
+/// let mut breath = Breath::new(Duration::from_millis(12_800), Duration::from_millis(50));
 ///
 /// loop {
 ///     led.set_brightness(breath.next()).unwrap();
@@ -105,37 +105,39 @@ fn cordic_sin(phase: u16) -> u8 {
 pub struct Breath {
     phase: u16,
     phase_step: u16,
-    interval_ms: u32,
+    interval: embassy_time::Duration,
 }
 
 impl Breath {
     /// Create a new breathing generator.
     ///
-    /// * `cycle_ms` — duration of one full breath cycle (bright → dark →
-    ///   bright) in milliseconds.
-    /// * `interval_ms` — time between [`next`](Self::next) calls in
-    ///   milliseconds.  Should be ≤ `cycle_ms`.
+    /// * `cycle` — duration of one full breath cycle (bright → dark →
+    ///   bright) as a [`Duration`](embassy_time::Duration).
+    /// * `interval` — time between [`next`](Self::next) calls as a
+    ///   [`Duration`](embassy_time::Duration).  Should be ≤ `cycle`.
     ///
     /// # Panics
     ///
-    /// Panics if `cycle_ms == 0` or `interval_ms == 0`.
+    /// Panics if `cycle` or `interval` is zero milliseconds.
     ///
     /// # Example
     ///
     /// ```ignore
     /// // 8-second cycle at 20 Hz → 400 steps
-    /// let breath = Breath::new(8000, 50);
+    /// let breath = Breath::new(Duration::from_millis(8000), Duration::from_millis(50));
     /// ```
     #[track_caller]
-    pub fn new(cycle_ms: u32, interval_ms: u32) -> Self {
-        assert!(cycle_ms > 0, "cycle_ms must be > 0");
-        assert!(interval_ms > 0, "interval_ms must be > 0");
+    pub fn new(cycle: embassy_time::Duration, interval: embassy_time::Duration) -> Self {
+        let cycle_ms = cycle.as_millis();
+        let interval_ms = interval.as_millis();
+        assert!(cycle_ms > 0, "cycle duration must be > 0 ms");
+        assert!(interval_ms > 0, "interval duration must be > 0 ms");
         // phase_step = 65536 × interval_ms / cycle_ms
-        let step = ((65536u64 * interval_ms as u64) / cycle_ms as u64) as u16;
+        let step = ((65536u64 * interval_ms) / cycle_ms) as u16;
         Self {
             phase: 0,
             phase_step: step.max(1),
-            interval_ms,
+            interval,
         }
     }
 
@@ -165,7 +167,7 @@ impl core::fmt::Debug for Breath {
         f.debug_struct("Breath")
             .field("phase", &self.phase)
             .field("phase_step", &self.phase_step)
-            .field("interval_ms", &self.interval_ms)
+            .field("interval_ms", &self.interval.as_millis())
             .finish()
     }
 }
@@ -178,7 +180,7 @@ impl defmt::Format for Breath {
             "Breath {{ phase: {}, step: {}, interval_ms: {} }}",
             self.phase,
             self.phase_step,
-            self.interval_ms
+            self.interval.as_millis()
         )
     }
 }
@@ -212,8 +214,8 @@ use embedded_hal::pwm::SetDutyCycle;
 ///     pwm_channel,
 ///     GammaCorrection::CieLStar,
 ///     PolarityMode::ActiveLow,
-///     12_800, // 12.8 s cycle
-///     50,     // 50 ms update interval
+///     Duration::from_millis(12_800), // 12.8 s cycle
+///     Duration::from_millis(50),     // 50 ms update interval
 /// ).unwrap();
 ///
 /// loop {
@@ -236,11 +238,11 @@ impl<P: SetDutyCycle, G: GammaMap> BreathLed<P, G> {
         pin: P,
         gamma: G,
         polarity: PolarityMode,
-        cycle_ms: u32,
-        interval_ms: u32,
+        cycle: embassy_time::Duration,
+        interval: embassy_time::Duration,
     ) -> Result<Self, P::Error> {
         let led = PwmLed::new(pin, gamma, polarity)?;
-        let breath = Breath::new(cycle_ms, interval_ms);
+        let breath = Breath::new(cycle, interval);
         Ok(Self { led, breath })
     }
 
@@ -257,7 +259,7 @@ impl<P: SetDutyCycle, G: GammaMap> BreathLed<P, G> {
     /// interval.
     ///
     /// This is the main animation method — combines brightness update with
-    /// [`Timer::after_millis`](embassy_time::Timer::after_millis).
+    /// [`Timer::after`](embassy_time::Timer::after).
     ///
     /// # Example
     ///
@@ -270,7 +272,7 @@ impl<P: SetDutyCycle, G: GammaMap> BreathLed<P, G> {
     pub async fn breathe(&mut self) -> Result<(), P::Error> {
         let brightness = self.breath.next();
         self.led.set_brightness(brightness)?;
-        embassy_time::Timer::after_millis(self.breath.interval_ms as u64).await;
+        embassy_time::Timer::after(self.breath.interval).await;
         Ok(())
     }
 
@@ -320,6 +322,7 @@ impl<P: SetDutyCycle, G: GammaMap> defmt::Format for BreathLed<P, G> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use embassy_time::Duration;
 
     // ── cordic_sin ───────────────────────────────
 
@@ -390,12 +393,12 @@ mod tests {
 
     #[test]
     fn breath_new_does_not_panic() {
-        let _b = Breath::new(1000, 50);
+        let _b = Breath::new(Duration::from_millis(1000), Duration::from_millis(50));
     }
 
     #[test]
     fn breath_next_returns_valid_range() {
-        let mut b = Breath::new(1000, 50);
+        let mut b = Breath::new(Duration::from_millis(1000), Duration::from_millis(50));
         for _ in 0..1000 {
             let _v = b.next();
             // next() returns u8, so 0..=255 is guaranteed by type.
@@ -407,7 +410,7 @@ mod tests {
     fn breath_next_advances() {
         // A large interval ensures a big phase step, so consecutive calls
         // should return noticeably different brightness values.
-        let mut b = Breath::new(65536, 16384);
+        let mut b = Breath::new(Duration::from_millis(65536), Duration::from_millis(16384));
         let v1 = b.next();
         let v2 = b.next();
         let diff = (v1 as i16 - v2 as i16).unsigned_abs();
@@ -416,7 +419,7 @@ mod tests {
 
     #[test]
     fn breath_reset() {
-        let mut b = Breath::new(65536, 16384); // 90° per step
+        let mut b = Breath::new(Duration::from_millis(65536), Duration::from_millis(16384)); // 90° per step
         // Advance several steps away from the start
         for _ in 0..10 {
             b.next();
@@ -435,7 +438,7 @@ mod tests {
     #[test]
     fn breath_full_cycle_reaches_min_and_max() {
         // 256 steps per cycle — enough samples to hit both extremes
-        let mut b = Breath::new(65536, 256);
+        let mut b = Breath::new(Duration::from_millis(65536), Duration::from_millis(256));
         let mut min = 255u8;
         let mut max = 0u8;
         for _ in 0..300 {
@@ -448,15 +451,15 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "cycle_ms must be > 0")]
+    #[should_panic(expected = "cycle duration must be > 0 ms")]
     fn breath_new_cycle_zero_panics() {
-        Breath::new(0, 50);
+        Breath::new(Duration::from_millis(0), Duration::from_millis(50));
     }
 
     #[test]
-    #[should_panic(expected = "interval_ms must be > 0")]
+    #[should_panic(expected = "interval duration must be > 0 ms")]
     fn breath_new_interval_zero_panics() {
-        Breath::new(1000, 0);
+        Breath::new(Duration::from_millis(1000), Duration::from_millis(0));
     }
 
     // ── BreathLed (requires pwm mock) ─────────────
@@ -465,6 +468,7 @@ mod tests {
         use super::*;
         use crate::PolarityMode;
         use crate::pwm::GammaCorrection;
+        use embassy_time::Duration;
         use embedded_hal_mock::eh1::pwm::Mock as PwmMock;
         use embedded_hal_mock::eh1::pwm::Transaction as PwmTrans;
 
@@ -480,8 +484,8 @@ mod tests {
                 PwmMock::new(&e),
                 GammaCorrection::Linear,
                 PolarityMode::ActiveHigh,
-                10_000,
-                50,
+                Duration::from_millis(10_000),
+                Duration::from_millis(50),
             )
             .unwrap();
             assert!(led.led().is_off());
@@ -498,8 +502,8 @@ mod tests {
                 PwmMock::new(&e),
                 GammaCorrection::Linear,
                 PolarityMode::ActiveHigh,
-                10_000,
-                50,
+                Duration::from_millis(10_000),
+                Duration::from_millis(50),
             )
             .unwrap();
             // reset_breath() should not cause any PWM operations

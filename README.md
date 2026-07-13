@@ -65,7 +65,7 @@ use status_led::pwm::GammaCorrection;
 use status_led::PolarityMode;
 
 // Manual breath loop with Breath
-let mut breath = Breath::new(12_800, 50);
+let mut breath = Breath::new(Duration::from_millis(12_800), Duration::from_millis(50));
 loop {
     led.set_brightness(breath.next()).unwrap();
     Timer::after_millis(50).await;
@@ -76,8 +76,8 @@ let mut led = BreathLed::new(
     ch,
     GammaCorrection::CieLStar,
     PolarityMode::ActiveLow,
-    12_800,
-    50,
+    Duration::from_millis(12_800),
+    Duration::from_millis(50),
 ).unwrap();
 
 loop {
