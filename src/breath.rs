@@ -296,7 +296,7 @@ impl<P: SetDutyCycle, G: GammaMap> BreathLed<P, G> {
     /// [`on`](PwmLed::on), [`off`](PwmLed::off), or direct brightness
     /// control.
     #[inline]
-    pub fn led(&self) -> &PwmLed<P, G> {
+    pub fn led(&mut self) -> &mut PwmLed<P, G> {
         &self.led
     }
 
