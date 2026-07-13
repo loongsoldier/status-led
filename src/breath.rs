@@ -61,11 +61,11 @@ fn cordic_sin(phase: u16) -> u8 {
     let mut x: i32 = X_INIT;
     let mut y: i32 = 0;
 
-    for i in 0..15 {
+    for (i, &atan) in CORDIC_ATAN.iter().enumerate() {
         let d: i32 = if angle >= 0 { 1 } else { -1 };
         let x_next = x - d * (y >> i);
         let y_next = y + d * (x >> i);
-        angle -= d * CORDIC_ATAN[i] as i32;
+        angle -= d * atan as i32;
         x = x_next;
         y = y_next;
     }
@@ -144,6 +144,7 @@ impl Breath {
     /// The brightness follows a sinusoidal curve: starts near 0, rises to
     /// 255 at the peak, then falls back to near 0.
     #[inline]
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> u8 {
         let brightness = cordic_sin(self.phase);
         self.phase = self.phase.wrapping_add(self.phase_step);
